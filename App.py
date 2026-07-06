@@ -4,21 +4,57 @@ import numpy as np
 
 st.set_page_config(page_title="Sentiment vs Trader Behavior", layout="wide")
 
-# ─────────────────────────────────────────────────────────
-# 1. LOAD DATA
-# Reuse your Cells 2-5 logic from the notebook: load both CSVs,
-# convert timestamps, merge, build the `daily` dataframe.
-# TODO: paste/adapt that pipeline into a function called load_data()
-# that returns the finished `daily` dataframe.
-# ─────────────────────────────────────────────────────────
 
-@st.cache_data  # <- this decorator means Streamlit only re-runs this
-                # function when the underlying files change, not on
-                # every single click. Without it, your app reloads
-                # and reprocesses 15k rows every time someone touches a widget.
+@st.cache_data
 def load_data():
-    # TODO: your pipeline here
-    daily = None
+    # Cell 2: load + inspect
+    sentiment_df = pd.read_csv('fear_greed_index (1).csv')
+    trades_df = pd.read_csv('historical_data.csv')
+
+    # Cell 3: timestamp alignment — the landmine you already know about
+    sentiment_df['date'] = pd.to_datetime(sentiment_df['date'])
+    trades_df['date'] = pd.to_datetime(
+        trades_df['Timestamp IST'], format='%d-%m-%Y %H:%M'
+    ).dt.normalize()
+
+    # Cell 4: left join — keep every trade even if sentiment is missing
+    merged = trades_df.merge(
+        sentiment_df[['date', 'classification']], on='date', how='left'
+    )
+
+    # Cell 5: derive features, build the daily rollup
+    def is_long(direction):
+        return direction in ['Buy', 'Open Long', 'Close Short', 'Short > Long']
+
+    def is_short(direction):
+        return direction in ['Sell', 'Open Short', 'Close Long', 'Long > Short']
+
+    merged['is_long'] = merged['Direction'].apply(is_long)
+    merged['is_short'] = merged['Direction'].apply(is_short)
+    merged['win'] = merged['Closed PnL'] > 0
+
+    daily = merged.groupby(['Account', 'date']).agg(
+        daily_pnl=('Closed PnL', 'sum'),
+        n_trades=('Closed PnL', 'size'),
+        win_rate=('win', 'mean'),
+        avg_trade_size=('Size USD', 'mean'),
+        long_trades=('is_long', 'sum'),
+        short_trades=('is_short', 'sum'),
+        classification=('classification', 'first'),
+    ).reset_index()
+
+    daily['long_short_ratio'] = (
+        daily['long_trades'] / daily['short_trades'].replace(0, np.nan)
+    )
+
+    def bucket(c):
+        if pd.isna(c): return np.nan
+        if 'Fear' in c: return 'Fear'
+        if 'Greed' in c: return 'Greed'
+        return 'Neutral'
+
+    daily['sentiment_bucket'] = daily['classification'].apply(bucket)
+
     return daily
 
 daily = load_data()
@@ -28,39 +64,55 @@ st.caption("Primetrade.ai take-home — Hyperliquid trader behavior across Fear/
 
 # ─────────────────────────────────────────────────────────
 # 2. SIDEBAR FILTER
-# TODO: add a st.sidebar.multiselect() letting the user pick which
-# sentiment buckets to include (Fear / Greed / Neutral).
-# Hint: get the unique values from daily['sentiment_bucket'] to
-# populate the options, and use .isin() to filter the dataframe
-# based on what's selected.
 # ─────────────────────────────────────────────────────────
+st.sidebar.header("Filters")
+all_buckets = sorted(daily['sentiment_bucket'].dropna().unique().tolist())
+selected = st.sidebar.multiselect(
+    "Sentiment regime",
+    options=all_buckets,
+    default=all_buckets
+)
+filtered = daily[daily['sentiment_bucket'].isin(selected)]
 
-# selected = st.sidebar.multiselect(...)
-# filtered = daily[daily['sentiment_bucket'].isin(selected)]
+if filtered.empty:
+    st.warning("No data for this filter selection.")
+    st.stop()
 
 # ─────────────────────────────────────────────────────────
 # 3. KPI ROW
-# TODO: use st.columns(3) to lay out 3 side-by-side st.metric() cards:
-#   - average win rate (filtered)
-#   - average daily PnL (filtered)
-#   - average long/short ratio (filtered)
-# Hint: st.columns(3) returns 3 column objects, use them like:
-#   col1, col2, col3 = st.columns(3)
-#   with col1: st.metric("Win Rate", f"{value:.1%}")
 # ─────────────────────────────────────────────────────────
-
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Avg Win Rate", f"{filtered['win_rate'].mean():.1%}")
+with col2:
+    st.metric("Avg Daily PnL", f"${filtered['daily_pnl'].mean():,.2f}")
+with col3:
+    st.metric("Avg Long/Short Ratio", f"{filtered['long_short_ratio'].mean():.2f}")
 
 # ─────────────────────────────────────────────────────────
 # 4. CHARTS
-# TODO: at minimum, recreate your Cell 6 comparison as a bar chart.
-# Hint: st.bar_chart() takes a dataframe directly — group your
-# filtered data by sentiment_bucket, take the mean of daily_pnl
-# and win_rate, and pass that grouped result straight in.
 # ─────────────────────────────────────────────────────────
+st.subheader("PnL & Win Rate by Sentiment")
+chart_data = filtered.groupby('sentiment_bucket')[['daily_pnl', 'win_rate']].mean()
+st.bar_chart(chart_data)
 
+st.subheader("Size vs Frequency Segments")
+med_size = filtered['avg_trade_size'].median()
+filtered = filtered.copy()
+filtered['size_segment'] = np.where(filtered['avg_trade_size'] > med_size, 'High size', 'Low size')
+med_freq = filtered['n_trades'].median()
+filtered['freq_segment'] = np.where(filtered['n_trades'] > med_freq, 'Frequent', 'Infrequent')
+
+seg_col1, seg_col2 = st.columns(2)
+with seg_col1:
+    st.write("**Win rate by size segment**")
+    st.bar_chart(filtered.groupby('size_segment')['win_rate'].mean())
+with seg_col2:
+    st.write("**Win rate & PnL by frequency segment**")
+    st.bar_chart(filtered.groupby('freq_segment')[['win_rate', 'daily_pnl']].mean())
 
 # ─────────────────────────────────────────────────────────
-# 5. RAW DATA TABLE (nice to have, easy win)
-# TODO: st.dataframe(filtered) with maybe a st.checkbox() to
-# toggle whether it's shown at all.
+# 5. RAW DATA TABLE
 # ─────────────────────────────────────────────────────────
+if st.checkbox("Show raw data"):
+    st.dataframe(filtered)
