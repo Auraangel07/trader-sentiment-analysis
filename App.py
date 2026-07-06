@@ -111,26 +111,6 @@ with seg_col2:
     st.write("**Win rate & PnL by frequency segment**")
     st.bar_chart(filtered.groupby('freq_segment')[['win_rate', 'daily_pnl']].mean())
 
-st.subheader("PnL & Win Rate by Sentiment")
-chart_data = filtered.groupby('sentiment_bucket')[['daily_pnl', 'win_rate']].mean()
-
-col_a, col_b = st.columns(2)
-with col_a:
-    st.write("**Avg Daily PnL**")
-    st.bar_chart(chart_data[['daily_pnl']])
-with col_b:
-    st.write("**Avg Win Rate**")
-    st.bar_chart(chart_data[['win_rate']])
-st.subheader("PnL & Win Rate by Sentiment")
-chart_data = filtered.groupby('sentiment_bucket')[['daily_pnl', 'win_rate']].mean()
-
-col_a, col_b = st.columns(2)
-with col_a:
-    st.write("**Avg Daily PnL**")
-    st.bar_chart(chart_data[['daily_pnl']])
-with col_b:
-    st.write("**Avg Win Rate**")
-    st.bar_chart(chart_data[['win_rate']])
 
 st.subheader("Size vs Frequency Segments")
 med_size = filtered['avg_trade_size'].median()
