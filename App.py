@@ -8,7 +8,7 @@ st.set_page_config(page_title="Sentiment vs Trader Behavior", layout="wide")
 @st.cache_data
 def load_data():
     # Cell 2: load + inspect
-    sentiment_df = pd.read_csv('fear_greed_index (1).csv')
+    sentiment_df = pd.read_csv('fear_greed_index.csv')
     trades_df = pd.read_csv('historical_data.csv')
 
     # Cell 3: timestamp alignment — the landmine you already know about
